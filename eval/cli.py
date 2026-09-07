@@ -13,6 +13,13 @@ from eval.run import run_eval
 from eval.suites import KNOWN
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return parsed
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m eval")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -37,8 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--suite", required=True, choices=KNOWN)
     p_run.add_argument("--slice", default="smoke")
     p_run.add_argument("--runtime", default="api", choices=("api", "codex", "harbor"))
-    p_run.add_argument("--n", type=int, default=None)
-    p_run.add_argument("--limit", type=int, default=None)
+    p_run.add_argument("--n", type=_positive_int, default=None)
+    p_run.add_argument("--limit", type=_positive_int, default=None)
     p_run.add_argument("--dry-run", action="store_true")
     p_run.add_argument("--print-cmd", action="store_true")
 

@@ -16,6 +16,13 @@ from eval.suites import Item, Suite, load_suite
 from eval.usage import RunUsage
 
 
+def _require_positive(name: str, value: int | None) -> None:
+    if value is None:
+        return
+    if value < 1:
+        raise ValueError(f"{name} must be >= 1, got {value}")
+
+
 def _run_one(item: Item, profile, runtime: str, run_id: str) -> tuple[str, RunUsage]:
     if runtime == "api":
         return run_api(item, profile)
@@ -128,6 +135,8 @@ def run_eval(
     dry_run: bool,
     print_cmd: bool,
 ) -> Path | dict:
+    _require_positive("n", n)
+    _require_positive("limit", limit)
     suite = load_suite(suite_name)
     items = load_items(suite_name, slice_name, limit)
     repeats = n if n is not None else suite.n_default
