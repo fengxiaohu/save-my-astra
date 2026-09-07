@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+import uuid
 from pathlib import Path
 
 from eval.paths import REPORTS
@@ -9,11 +9,15 @@ from eval.paths import REPORTS
 
 def write_report(payload: dict) -> Path:
     REPORTS.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    path = REPORTS / f"{stamp}-{payload.get('suite')}-{payload.get('profile')}.json"
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+    run_id = payload.get("run_id") or uuid.uuid4().hex
+    suite = payload.get("suite", "unknown")
+    profile = payload.get("profile", "unknown")
+    path = REPORTS / f"{run_id}-{suite}-{profile}.json"
+    with path.open("x", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
     md = path.with_suffix(".md")
-    md.write_text(to_markdown(payload))
+    with md.open("x", encoding="utf-8") as handle:
+        handle.write(to_markdown(payload))
     return path
 
 
@@ -24,6 +28,8 @@ def to_markdown(payload: dict) -> str:
         f"Role: `{payload.get('role')}`",
         "",
         payload.get("question", ""),
+        "",
+        f"Run: `{payload.get('run_id')}`",
         "",
         f"Runtime: `{payload.get('runtime')}`  n={payload.get('n')}",
         "",
