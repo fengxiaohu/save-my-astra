@@ -1,13 +1,15 @@
 ---
-name: codex-astra-routing
+name: save-my-astra
 description: >-
-  Install Codex parent/child routing: GPT-6 Astra as the root agent,
+  Install Save My Astra Codex routing: GPT-6 Astra as the root agent,
   gpt-5.6-luna (or terra) as a pinned subagent. Use when the user wants
-  cheaper Codex subagents, default_subagent_model, or to stop children
-  inheriting gpt-6-astra.
+  to save GPT-6 Astra tokens, cheaper Codex subagents,
+  default_subagent_model, or to stop children inheriting gpt-6-astra.
 ---
 
-# Codex Astra routing
+# Save My Astra
+
+Stop burning GPT-6 Astra tokens on work Luna can do.
 
 Pin GPT-6 Astra as the parent. Pin a cheaper child so spawned agents do not clone Astra.
 

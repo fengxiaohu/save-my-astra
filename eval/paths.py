@@ -8,6 +8,8 @@ REPORTS = ROOT / "reports"
 DATA = ROOT / "data"
 EVAL_CODEX = ROOT / ".eval-codex"
 PRICING = Path(__file__).resolve().parent / "pricing.yaml"
+SKILL_NAME = "save-my-astra"
+SKILL_FILE = ROOT / "skills" / SKILL_NAME / "SKILL.md"
 
 
 def profile_path(name: str) -> Path:

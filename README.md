@@ -1,8 +1,32 @@
-# Codex Astra Routing
+# Save My Astra 🚀
 
-Codex: Astra parent, Luna/Terra children. Stop subagents cloning the expensive model.
+**Stop burning GPT-6 Astra tokens on work Luna can do.**
 
-Default profile `astra-luna` sets `gpt-6-astra` (`low`) as the root agent and pins `gpt-5.6-luna` (`max`) as the child. This is a hypothesis to install and measure, not a claim that the pairing is cheapest.
+GPT-6 Astra stays as the orchestrator.
+Cheap workers handle exploration, scanning, and parallel subagent work.
+
+A tiny Codex routing setup so spawned agents stop cloning GPT-6 Astra.
+
+## The problem
+
+Without routing:
+
+Astra → Astra → Astra → Astra
+
+With Save My Astra:
+
+```text
+Astra 🧠
+ ├─ Luna ⚡
+ ├─ Luna ⚡
+ └─ Terra ⚡
+```
+
+Luna is the default worker. Terra is the fallback if Luna cannot spawn.
+
+**Premium intelligence for premium decisions.**
+
+Default profile `astra-luna` pins `gpt-6-astra` (`low`) as the parent and `gpt-5.6-luna` (`max`) as the child. This is a hypothesis to install and measure, not a claim that the pairing is cheapest.
 
 ## Install
 
@@ -15,7 +39,7 @@ Does not overwrite `model_provider`, MCP servers, notify paths, or plugins. Exis
 python -m eval verify --profile astra-luna
 ```
 
-Or tell Codex: install astra-luna routing from this repo. The skill is `skills/codex-astra-routing/SKILL.md`.
+Or tell Codex: install Save My Astra from this repo. The skill is `skills/save-my-astra/SKILL.md`.
 
 Then start a **new** Codex session. Spawn one read-only repo scan. The child must be `gpt-5.6-luna` (or Terra if you installed that profile), not `gpt-6-astra`.
 
@@ -33,7 +57,7 @@ Use `astra-terra` when Luna is missing from the spawn allowlist.
 - `~/.codex/config.toml` — parent model, `[agents]` defaults, `hide_spawn_agent_metadata = false`
 - `~/.codex/agents/luna-max-worker.toml` — child model pinned
 - `~/.codex/AGENTS.md` — delegate when it can save time or quality; do not clone the parent
-- `~/.codex/skills/codex-astra-routing/SKILL.md` — the same one-liner for later sessions
+- `~/.codex/skills/save-my-astra/SKILL.md` — the same one-liner for later sessions
 
 Plus quota is not API spend. Subagent runs can use more tokens and still cost less if cheap tokens replace expensive ones.
 

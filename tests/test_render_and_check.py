@@ -70,7 +70,7 @@ def test_write_install_verifies(tmp_path: Path):
     assert data["mcp_servers"]["x"]["url"] == "https://example.com"
     worker = (home / "agents" / "luna-max-worker.toml").read_text()
     assert 'model = "gpt-5.6-luna"' in worker
-    skill = home / "skills" / "codex-astra-routing" / "SKILL.md"
+    skill = home / "skills" / "save-my-astra" / "SKILL.md"
     assert skill.exists()
     assert "default_subagent_model" in skill.read_text()
 

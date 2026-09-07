@@ -28,7 +28,7 @@ def _hf_rows(dataset: str, split: str, config: str = "default", page: int = 100)
         )
         req = urllib.request.Request(
             f"{HF_ROWS}?{query}",
-            headers={"User-Agent": "codex-astra-routing/0.1"},
+            headers={"User-Agent": "save-my-astra/0.1"},
         )
         with urllib.request.urlopen(req, timeout=60) as resp:
             payload = json.loads(resp.read().decode())

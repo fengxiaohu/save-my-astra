@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from eval.paths import ROOT, TEMPLATES
+from eval.paths import SKILL_FILE, SKILL_NAME, TEMPLATES
 from eval.profiles import list_profiles, load_profile
 from eval.render import render_template
 from eval.routing import classify_routing
@@ -34,11 +34,13 @@ def check() -> list[str]:
     if "must immediately" in daily.lower() or "立刻派" in daily:
         errors.append("daily AGENTS.md still coerces spawn")
 
-    skill = ROOT / "skills" / "codex-astra-routing" / "SKILL.md"
+    skill = SKILL_FILE
     if not skill.exists():
-        errors.append("missing skills/codex-astra-routing/SKILL.md")
+        errors.append(f"missing skills/{SKILL_NAME}/SKILL.md")
     else:
         body = skill.read_text()
+        if f"name: {SKILL_NAME}" not in body:
+            errors.append(f"skill name must be {SKILL_NAME}")
         for needle in (
             "default_subagent_model",
             "gpt-6-astra",

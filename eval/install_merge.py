@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from eval.paths import ROOT
+from eval.paths import SKILL_FILE, SKILL_NAME
 from eval.profiles import load_profile
 from eval.render import render_template
 
@@ -171,9 +171,9 @@ def write_install(codex_home: Path, profile_name: str) -> None:
     config = codex_home / "config.toml"
     existing = config.read_text() if config.exists() else ""
     config.write_text(merge_snippet(existing, profile_name))
-    skill_src = ROOT / "skills" / "codex-astra-routing" / "SKILL.md"
+    skill_src = SKILL_FILE
     if skill_src.exists():
-        skill_dst = codex_home / "skills" / "codex-astra-routing" / "SKILL.md"
+        skill_dst = codex_home / "skills" / SKILL_NAME / "SKILL.md"
         skill_dst.parent.mkdir(parents=True, exist_ok=True)
         skill_dst.write_text(skill_src.read_text())
 

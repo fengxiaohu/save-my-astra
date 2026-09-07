@@ -1,7 +1,7 @@
 [project]
-name = "codex-astra-routing"
+name = "save-my-astra"
 version = "0.1.0"
-description = "Shareable Codex parent/child routing templates and eval adapters."
+description = "Save your GPT-6 Astra tokens. Let Luna do the dirty work."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -16,6 +16,7 @@ dev = ["pytest>=8.0"]
 harbor = ["harbor"]
 
 [project.scripts]
+save-my-astra = "eval.cli:main"
 codex-routing = "eval.cli:main"
 
 [build-system]

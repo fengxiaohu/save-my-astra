@@ -41,7 +41,7 @@ PY
 fi
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-backup="$CODEX_HOME/backups/codex-astra-routing-$stamp"
+backup="$CODEX_HOME/backups/save-my-astra-$stamp"
 mkdir -p "$backup" "$CODEX_HOME/agents"
 
 if [[ -f "$CODEX_HOME/AGENTS.md" ]]; then
