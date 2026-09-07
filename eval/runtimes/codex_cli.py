@@ -50,18 +50,38 @@ def _parse_json_lines(stdout: str) -> tuple[str, RunUsage]:
 def run_codex(item: Item, profile: Profile, *, run_id: str) -> tuple[str, RunUsage]:
     if shutil.which("codex") is None:
         raise RuntimeError("codex CLI not on PATH")
+    login_home = (
+        Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+        .expanduser()
+        .resolve()
+    )
+    auth_source = login_home / "auth.json"
     home = write_codex_home(EVAL_CODEX / run_id / profile.name, profile, eval_agents=True)
+    auth_link = home / "auth.json"
+    linked_auth = False
+    if auth_link.exists() or auth_link.is_symlink():
+        raise RuntimeError(f"isolated CODEX_HOME already contains {auth_link}")
+    if auth_source.exists():
+        auth_link.symlink_to(auth_source)
+        linked_auth = True
     env = os.environ.copy()
     env["CODEX_HOME"] = str(home)
-    proc = subprocess.run(
-        ["codex", "exec", "--json", item.prompt],
-        cwd=home,
-        env=env,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["codex", "exec", "--json", item.prompt],
+            cwd=home,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    finally:
+        if linked_auth and (auth_link.exists() or auth_link.is_symlink()):
+            auth_link.unlink()
     combined = proc.stdout + "\n" + proc.stderr
     if proc.returncode != 0:
         raise RuntimeError(f"codex exec failed ({proc.returncode}): {combined[-2000:]}")
-    return _parse_json_lines(combined)
+    text, usage = _parse_json_lines(combined)
+    if usage.spawn_count == 0:
+        usage.attribute_unknown_to(profile.parent_model)
+    return text, usage
