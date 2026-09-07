@@ -102,3 +102,9 @@ Eval 适配器位于 `eval/`。方法与结论规则见 [docs/method.md](docs/me
 python -m pip install -e ".[dev]"
 python -m eval check
 ```
+
+## Contributing / 贡献
+
+Fork, branch, PR, squash merge. Details: [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Fork、开分支、PR、squash 合并。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
