@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -140,7 +141,8 @@ def run_eval(
     suite = load_suite(suite_name)
     items = load_items(suite_name, slice_name, limit)
     repeats = n if n is not None else suite.n_default
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"{stamp}-{uuid.uuid4().hex[:12]}"
 
     if runtime == "harbor" or print_cmd:
         from eval.runtimes.harbor import harbor_command
@@ -162,6 +164,7 @@ def run_eval(
             "baseline": baseline,
             "runtime": "harbor",
             "n": repeats,
+            "run_id": run_id,
             "commands": commands,
             "item_ids": [item.item_id for item in items],
         }
@@ -199,6 +202,7 @@ def run_eval(
         "baseline": baseline,
         "runtime": runtime,
         "n": repeats,
+        "run_id": run_id,
         "dry_run": dry_run,
         "item_ids": [item.item_id for item in items],
         "arms": arms,
