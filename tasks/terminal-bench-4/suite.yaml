@@ -1,0 +1,14 @@
+name: terminal-bench-4
+role: capability
+question: Does Codex parent/child routing help a terminal or coding agent?
+harness: harbor
+dataset: terminal-bench/terminal-bench@4.0.0
+n_default: 1
+default_delegation_expected: optional
+agent_timeout_hours: 8
+gpu_or_multicontainer:
+  - jax-speedrun-gpu
+  - vllm-deepseek-streaming
+  - sglang-qwen-burst
+  - fp8-rmsnorm-gemm
+notes: Official resolution rate is the quality number. Tokens and cost are contrast only.

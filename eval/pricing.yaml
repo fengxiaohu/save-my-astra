@@ -1,0 +1,24 @@
+# Editable estimates in USD per 1M tokens. Replace with the prices you pay.
+# These numbers are not a quote from OpenAI.
+
+currency: USD
+per_1m:
+  gpt-6-astra:
+    input: 10.0
+    output: 50.0
+    note: Placeholder. Confirm on the OpenAI price page before publishing a cost claim.
+  gpt-5.6-sol:
+    input: 1.75
+    output: 14.0
+    note: Placeholder.
+  gpt-5.6-terra:
+    input: 0.60
+    output: 4.80
+    note: Placeholder.
+  gpt-5.6-luna:
+    input: 0.20
+    output: 1.60
+    note: Placeholder.
+default:
+  input: 1.0
+  output: 4.0

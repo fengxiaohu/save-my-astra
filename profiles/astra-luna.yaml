@@ -1,0 +1,9 @@
+name: astra-luna
+role: routed
+parent_model: gpt-6-astra
+parent_effort: low
+agents_enabled: true
+subagent_name: luna_max_worker
+subagent_model: gpt-5.6-luna
+subagent_effort: max
+notes: Default hypothesis. Astra Light plans; Luna Max does bounded work.

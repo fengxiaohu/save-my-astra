@@ -1,0 +1,9 @@
+name: astra-terra
+role: routed
+parent_model: gpt-6-astra
+parent_effort: low
+agents_enabled: true
+subagent_name: terra_max_worker
+subagent_model: gpt-5.6-terra
+subagent_effort: max
+notes: Fallback when Luna cannot be spawned as a child.

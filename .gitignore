@@ -1,0 +1,23 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Isolated Codex homes and live eval artifacts
+.eval-codex/
+reports/
+jobs/
+data/
+!data/.gitkeep
+
+# Rendered secrets / local Codex copies
+.tmp/
+*.local.toml

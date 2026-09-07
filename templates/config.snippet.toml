@@ -1,0 +1,15 @@
+# Mergeable Codex routing snippet.
+# install.sh writes model / effort / [agents] / [features.multi_agent_v2]
+# and leaves model_provider, MCP, notify, and plugins alone.
+
+model = "{{PARENT_MODEL}}"
+model_reasoning_effort = "{{PARENT_EFFORT}}"
+
+[agents]
+enabled = {{AGENTS_ENABLED}}
+default_subagent_model = "{{SUBAGENT_MODEL}}"
+default_subagent_reasoning_effort = "{{SUBAGENT_EFFORT}}"
+max_concurrent_threads_per_session = 4
+
+[features.multi_agent_v2]
+hide_spawn_agent_metadata = false

@@ -1,0 +1,4 @@
+# Filled by: python -m eval download --suite swebench-pro
+# Keep 5-10 public instance_ids. Do not invent IDs.
+# Example format from SWE-bench Pro-os issues:
+# instance_qutebrowser__qutebrowser-<sha>-v<sha>

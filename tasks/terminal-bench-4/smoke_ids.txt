@@ -1,0 +1,5 @@
+# CPU-leaning TB 4.0.0 tasks. Not GPU / multi-container.
+# Pin: terminal-bench/terminal-bench@4.0.0
+html-js-filter
+interleaved-vigenere
+data-anonymization

@@ -1,0 +1,7 @@
+name: aime-2025
+role: cost_calibration
+question: Did the router produce an economic gain on a low-noise, deterministic set?
+dataset: math-ai/aime25
+n_default: 3
+default_delegation_expected: optional
+notes: Single AIME items rarely have parallel work. spawn=0 is usually routing_ok.

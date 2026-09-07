@@ -1,0 +1,12 @@
+name: swebench-pro
+role: capability
+question: Same routing hypothesis on issue-to-PR work in large repos.
+harness: swe_bench_pro_eval.py
+dataset: ScaleAI/SWE-bench_Pro
+os_repo: https://github.com/scaleapi/SWE-bench_Pro-os
+n_default: 1
+default_delegation_expected: optional
+# Only IDs listed here are treated as must-delegate. Keep this empty unless an
+# instance clearly splits (explore / patch / tests).
+delegation_expected_true: []
+notes: Official resolve rate is the quality number. Download IDs before a live run.

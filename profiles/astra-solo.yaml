@@ -1,0 +1,9 @@
+name: astra-solo
+role: baseline
+parent_model: gpt-6-astra
+parent_effort: low
+agents_enabled: false
+subagent_name: unused_worker
+subagent_model: gpt-6-astra
+subagent_effort: low
+notes: Parent finishes the item. Cost and quality baseline.

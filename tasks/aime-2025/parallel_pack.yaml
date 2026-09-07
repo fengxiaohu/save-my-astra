@@ -1,0 +1,4 @@
+# Optional multi-item pack. Only this kind of math task is delegation_expected=true.
+name: aime-2025-parallel-pack
+delegation_expected: true
+notes: Run several independent AIME items in one parent turn so parallel Luna workers can be justified.

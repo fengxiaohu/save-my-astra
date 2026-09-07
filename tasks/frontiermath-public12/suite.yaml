@@ -1,0 +1,7 @@
+name: frontiermath-public12
+role: cost_calibration
+question: Same cost question on the 12 public FrontierMath problems.
+n_default: 1
+default_delegation_expected: optional
+source: https://epoch.ai/benchmarks/frontiermath-tiers-1-3-v2
+notes: Public 12 only. Do not claim the private FrontierMath board.

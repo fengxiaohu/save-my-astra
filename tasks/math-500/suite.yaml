@@ -1,0 +1,7 @@
+name: math-500
+role: cost_calibration
+question: Did the router produce an economic gain on a low-noise, deterministic set?
+dataset: HuggingFaceH4/MATH-500
+n_default: 3
+default_delegation_expected: optional
+notes: Accuracy is a guardrail, not a math leaderboard and not coding evidence.
