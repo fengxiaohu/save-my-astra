@@ -49,7 +49,40 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--dry-run", action="store_true")
     p_run.add_argument("--print-cmd", action="store_true")
 
+    phase = sub.add_parser("phase3a", help="Frozen Phase 3A: prepare offline, execute only after Gate 0")
+    phase_sub = phase.add_subparsers(dest="phase_action", required=True)
+    prepare = phase_sub.add_parser("prepare", help="Freeze local inputs; never starts Harbor or Codex")
+    prepare.add_argument("--tasks", required=True, help="Local snapshot containing the four task directories")
+    prepare.add_argument("--codex-version", required=True, help="Exact CLI package version, not latest")
+    prepare.add_argument("--out", required=True)
+    inspect = phase_sub.add_parser("inspect", help="Validate frozen inputs and Gate 0 evidence without execution")
+    inspect.add_argument("--out", required=True)
+    execute = phase_sub.add_parser("execute", help="Starts real experiments; requires frozen Gate 0 evidence")
+    execute.add_argument("--out", required=True)
+    execute.add_argument("--telemetry", required=True, help="Fresh external quota and resource JSON")
+    execute.add_argument("--auth-source", required=True, help="ChatGPT auth.json; never copied to reports")
+
     args = parser.parse_args(argv)
+
+    if args.cmd == "phase3a":
+        from pathlib import Path
+        from eval.phase3 import prepare, execute, validate_manifest, validate_gate0
+
+        try:
+            if args.phase_action == "prepare":
+                print(prepare(Path(args.out), Path(args.tasks), args.codex_version))
+                print("Prepared only. No model called; Gate 0 is still required.")
+            elif args.phase_action == "inspect":
+                manifest = validate_manifest(Path(args.out))
+                print("Frozen inputs match.")
+                validate_gate0(Path(args.out), manifest)
+                print("Gate 0 artifact references match. No runtime probe executed.")
+            else:
+                print(execute(Path(args.out), Path(args.telemetry), Path(args.auth_source)))
+        except (OSError, ValueError, KeyError) as exc:
+            print(f"Phase 3A blocked: {exc}", file=sys.stderr)
+            return 1
+        return 0
 
     if args.cmd == "check":
         errors = check()

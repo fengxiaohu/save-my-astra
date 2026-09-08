@@ -17,7 +17,8 @@ def _completed_turn() -> str:
 
 def _spawned_turn() -> str:
     return (
-        '{"type":"item.completed","item":{"tool":"spawn_agent"}}\n'
+        '{"type":"item.completed","item":{"type":"collab_tool_call",'
+        '"tool":"spawn_agent","status":"completed","receiver_thread_ids":["child-1"]}}\n'
         + _completed_turn()
     )
 
@@ -50,7 +51,7 @@ def test_plus_auth_is_available_only_while_codex_runs(tmp_path: Path, monkeypatc
     )
 
     assert not (eval_home / "auth.json").exists()
-    assert list(usage.by_model) == ["gpt-6-astra"]
+    assert list(usage.by_model) == ["unknown"]
     assert usage.total_tokens == 110
 
 

@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import hashlib
 from pathlib import Path
 
 from eval.paths import EVAL_CODEX
@@ -17,6 +18,7 @@ from eval.usage import RunUsage
 def _parse_json_lines(stdout: str) -> tuple[str, RunUsage]:
     text_parts: list[str] = []
     usage = RunUsage()
+    events = []
     for line in stdout.splitlines():
         line = line.strip()
         if not line.startswith("{"):
@@ -25,6 +27,7 @@ def _parse_json_lines(stdout: str) -> tuple[str, RunUsage]:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
+        events.append(event)
         kind = event.get("type") or event.get("event") or ""
         if kind in {"item.completed", "agent.message", "message"}:
             payload = event.get("item") or event
@@ -40,10 +43,8 @@ def _parse_json_lines(stdout: str) -> tuple[str, RunUsage]:
                 output_tokens=int(raw.get("output_tokens") or raw.get("output") or 0),
                 total_tokens=int(raw.get("total_tokens") or raw.get("total") or 0),
             )
-        usage.spawn_count += count_spawns(event)
+    usage.spawn_count = count_spawns(events)
     text = "\n".join(text_parts) or stdout
-    if usage.spawn_count == 0:
-        usage.spawn_count = count_spawns(stdout)
     return text, usage
 
 
@@ -56,7 +57,8 @@ def run_codex(item: Item, profile: Profile, *, run_id: str) -> tuple[str, RunUsa
         .resolve()
     )
     auth_source = login_home / "auth.json"
-    home = write_codex_home(EVAL_CODEX / run_id / profile.name, profile, eval_agents=True)
+    item_key = hashlib.sha256(item.item_id.encode()).hexdigest()[:16]
+    home = write_codex_home(EVAL_CODEX / run_id / profile.name / item_key, profile, eval_agents=True)
     auth_link = home / "auth.json"
     linked_auth = False
     if auth_link.exists() or auth_link.is_symlink():
@@ -82,6 +84,5 @@ def run_codex(item: Item, profile: Profile, *, run_id: str) -> tuple[str, RunUsa
     if proc.returncode != 0:
         raise RuntimeError(f"codex exec failed ({proc.returncode}): {combined[-2000:]}")
     text, usage = _parse_json_lines(combined)
-    if usage.spawn_count == 0:
-        usage.attribute_unknown_to(profile.parent_model)
+    # Missing model metadata is not proof of parent identity or complete child observation.
     return text, usage

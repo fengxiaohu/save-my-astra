@@ -55,7 +55,9 @@ Harbor accepts Codex native config via `--ak config=...`. Rendered `AGENTS.md` a
 
 Plus allowance is not API spend. Multi-agent runs can use more tokens and still cost less if cheap tokens replace expensive ones.
 
-When a CLI turn has no spawn and omits the usage model, all `unknown` usage is attributed to the configured parent. Spawned turns remain `unknown` until rollout metadata can identify root and child thread models safely.
+Usage without model evidence remains `unknown`, including turns with no observed spawn. Phase 3A requires runtime session metadata to identify root and child models and efforts; requested configuration alone is not sufficient.
+
+Phase 3A uses the frozen paired runner described in [phase3a.md](phase3a.md): both parents use Astra `medium`, and the routed arm permits Luna `max` with no Terra fallback. The legacy `run --runtime harbor` path only produces commands in dry-run/print mode; execution requires the Phase 3A runner and Gate 0 evidence. The generic Harbor command above is not the Phase 3A experiment procedure.
 
 ## Process this repo encodes
 
