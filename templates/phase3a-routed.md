@@ -13,4 +13,3 @@ parent decides whether delegation is useful and accepts the final result.
 
 Use the original task instruction and verifier as the source of truth. Keep
 the task environment isolated and verify the completed result before returning.
-

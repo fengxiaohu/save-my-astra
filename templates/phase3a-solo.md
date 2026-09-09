@@ -9,4 +9,3 @@ arm. There is no worker configuration and no child delegation policy.
 Preserve the task environment, inspect the repository, make the smallest useful
 changes, and verify the result before returning the answer. Do not create child
 agents or recursive workers.
-
