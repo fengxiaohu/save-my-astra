@@ -41,7 +41,7 @@ Eval `AGENTS.md` may say: plan, then optionally send compute / check to the chil
 ## Runtimes
 
 - **API** (`--runtime api`): OpenAI Responses API. Reproducible token totals for cost calibration.
-- **Codex CLI** (`--runtime codex`): isolated `CODEX_HOME=.eval-codex/<run>`, `codex exec --json`, parse `turn.completed.usage`.
+- **Codex CLI** (`--runtime codex`): isolated `CODEX_HOME=.eval-codex/<run>`, `codex exec --json`, parse `turn.completed.usage`. For ChatGPT login, the runner links the active `auth.json` into the eval home only while the subprocess runs, then removes the link; credentials are never copied into reports.
 - **Harbor** (`--runtime harbor`): official TB path.
 
 ```bash
@@ -54,6 +54,10 @@ harbor run -d terminal-bench/terminal-bench@4.0.0 \
 Harbor accepts Codex native config via `--ak config=...`. Rendered `AGENTS.md` and worker toml live next to that config.
 
 Plus allowance is not API spend. Multi-agent runs can use more tokens and still cost less if cheap tokens replace expensive ones.
+
+Usage without model evidence remains `unknown`, including turns with no observed spawn. Phase 3A requires runtime session metadata to identify root and child models and efforts; requested configuration alone is not sufficient.
+
+Phase 3A uses the frozen paired runner described in [phase3a.md](phase3a.md): both parents use Astra `medium`, and the routed arm permits Luna `max` with no Terra fallback. The legacy `run --runtime harbor` path only produces commands in dry-run/print mode; execution requires the Phase 3A runner and Gate 0 evidence. The generic Harbor command above is not the Phase 3A experiment procedure.
 
 ## Process this repo encodes
 

@@ -54,6 +54,6 @@ def run_api(item: Item, profile: Profile) -> tuple[str, RunUsage]:
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
-        spawn_count=count_spawns(text) + count_spawns(response.to_dict() if hasattr(response, "to_dict") else text),
+        spawn_count=count_spawns(response.to_dict() if hasattr(response, "to_dict") else {}),
     )
     return text, usage

@@ -40,6 +40,17 @@ class RunUsage:
         bucket.add(input_tokens, output_tokens, total_tokens)
         self.spawn_count += spawn_count
 
+    def attribute_unknown_to(self, model: str) -> None:
+        unknown = self.by_model.pop("unknown", None)
+        if unknown is None:
+            return
+        self.add(
+            model,
+            input_tokens=unknown.input_tokens,
+            output_tokens=unknown.output_tokens,
+            total_tokens=unknown.total_tokens,
+        )
+
     @property
     def total_tokens(self) -> int:
         return sum(m.total_tokens for m in self.by_model.values())

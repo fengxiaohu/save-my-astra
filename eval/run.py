@@ -138,6 +138,10 @@ def run_eval(
 ) -> Path | dict:
     _require_positive("n", n)
     _require_positive("limit", limit)
+    if suite_name == "terminal-bench-4" and runtime != "harbor":
+        raise ValueError("Terminal-Bench requires Harbor task environments and the original verifier")
+    if runtime == "harbor" and not (dry_run or print_cmd):
+        raise ValueError("Legacy Harbor execution is command-only; use phase3a prepare/execute for verified paired runs")
     suite = load_suite(suite_name)
     items = load_items(suite_name, slice_name, limit)
     repeats = n if n is not None else suite.n_default
@@ -171,8 +175,7 @@ def run_eval(
         if print_cmd or dry_run:
             path = write_report(payload)
             return path
-        run_harbor(lp(profile), items, out=Path(".eval-codex") / run_id / profile)
-        return write_report(payload)
+        raise ValueError("Harbor execution requires the Phase 3A frozen runner")
 
     arms = [
         run_arm(
