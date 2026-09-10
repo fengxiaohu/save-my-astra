@@ -13,17 +13,153 @@ from datetime import datetime
 from pathlib import Path
 
 IMAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[a-f0-9]{64}$")
+LOCAL_IMAGE = re.compile(r"^sha256:[a-f0-9]{64}$")
 
 
-def validate_environment(data: dict) -> None:
-    if not isinstance(data, dict) or not isinstance(data.get("images"), dict) or "main" not in data["images"]:
-        raise ValueError("Gate 0 requires pinned images for main and all sidecar services")
-    for service, image in data["images"].items():
-        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", service) or not isinstance(image, str) or not IMAGE.fullmatch(image):
-            raise ValueError("service images must be immutable registry digests")
+def _validate_image(image: object, *, role: str, service: str) -> None:
+    if not isinstance(image, str) or not (
+        IMAGE.fullmatch(image) or LOCAL_IMAGE.fullmatch(image)
+    ):
+        raise ValueError(
+            f"{role} service {service!r} must use an immutable registry digest "
+            "or a local sha256 image ID"
+        )
+
+
+def _inspect_local_image(image: str) -> None:
+    """Require a local image ID to resolve to exactly the frozen ID.
+
+    Registry references are immutable by construction and may be pulled by
+    Harbor.  A bare local image ID has no repository tag to anchor it, so Gate
+    0 must prove that Docker currently owns that exact image object.
+    """
+    try:
+        inspected = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", image],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError(f"cannot inspect local image {image}: {type(exc).__name__}") from exc
+    if inspected.returncode != 0 or inspected.stdout.strip() != image:
+        raise ValueError(f"local image ID is absent or mismatched: {image}")
+
+
+def _validate_role(data: object, *, role: str) -> None:
+    if not isinstance(data, dict) or not isinstance(data.get("images"), dict):
+        raise ValueError(f"Gate 0 requires a {role} environment with pinned images")
+    images = data["images"]
+    if "main" not in images:
+        raise ValueError(f"Gate 0 requires a pinned {role} main image")
+    for service, image in images.items():
+        if not isinstance(service, str) or not re.fullmatch(
+            r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", service
+        ):
+            raise ValueError(f"{role} service names must be Docker Compose identifiers")
+        _validate_image(image, role=role, service=service)
+        if LOCAL_IMAGE.fullmatch(image):
+            _inspect_local_image(image)
     for key in ("cpus", "memory_mb"):
         if type(data.get(key)) is not int or data[key] <= 0:
-            raise ValueError(f"environment {key} must be a positive integer")
+            raise ValueError(f"{role} environment {key} must be a positive integer")
+
+
+def validate_environment(data: dict, *, require_verifier: bool = False) -> None:
+    """Validate a legacy or role-separated frozen environment manifest.
+
+    The legacy top-level shape remains readable for non-separate verifier
+    tasks and old offline fixtures.  A separate verifier must use the explicit
+    ``agent`` / ``verifier`` shape so its image and resource freeze cannot be
+    silently inherited from the agent environment.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("Gate 0 environment must be an object")
+    role_keys = {"agent", "verifier"} & set(data)
+    if role_keys:
+        if set(data) & {"images", "cpus", "memory_mb"}:
+            raise ValueError("role-separated environment cannot mix legacy fields")
+        if "agent" not in data:
+            raise ValueError("role-separated environment is missing agent")
+        _validate_role(data["agent"], role="agent")
+        if "verifier" in data:
+            _validate_role(data["verifier"], role="verifier")
+        elif require_verifier:
+            raise ValueError("separate verifier requires a frozen verifier environment")
+        return
+
+    _validate_role(data, role="agent")
+    if require_verifier:
+        raise ValueError("separate verifier requires role-separated environment data")
+
+
+def _task_has_separate_verifier(task: dict) -> bool:
+    verifier = task.get("verifier")
+    if isinstance(verifier, dict) and (
+        verifier.get("environment_mode") == "separate"
+        or isinstance(verifier.get("environment"), dict)
+    ):
+        return True
+    for step in task.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        step_verifier = step.get("verifier")
+        if isinstance(step_verifier, dict) and (
+            step_verifier.get("environment_mode") == "separate"
+            or isinstance(step_verifier.get("environment"), dict)
+        ):
+            return True
+    return False
+
+
+def _role_environments(data: dict, *, separate_verifier: bool) -> tuple[dict, dict | None]:
+    if "agent" in data:
+        agent = data["agent"]
+        verifier = data.get("verifier")
+    else:
+        agent = data
+        verifier = None if separate_verifier else data
+    if separate_verifier and verifier is None:
+        raise ValueError("separate verifier requires role-separated environment data")
+    return agent, verifier
+
+
+def _definition_services(definition: Path, *, role: str) -> set[str]:
+    """Return the services Harbor can start from one role's build context."""
+    if not definition.is_dir():
+        raise ValueError(f"{role} environment definition is missing: {definition}")
+    compose = definition / "docker-compose.yaml"
+    if not compose.exists():
+        return {"main"}
+    import yaml
+
+    compose_data = yaml.safe_load(compose.read_text()) or {}
+    services = compose_data.get("services", {})
+    if not isinstance(services, dict):
+        raise ValueError(f"{role} environment services must be a mapping")
+    if compose_data.get("include") or any(
+        isinstance(service, dict) and service.get("extends")
+        for service in services.values()
+    ):
+        raise ValueError(
+            f"{role} compose includes/extends require a resolved, audited environment snapshot"
+        )
+    return set(services) | {"main"}
+
+
+def _verifier_definitions(task_dir: Path, task: dict) -> list[Path]:
+    """Resolve the verifier build contexts used by Harbor's separate mode."""
+    tests_dir = task_dir / "tests"
+    steps = task.get("steps") or []
+    if not steps:
+        return [tests_dir]
+    definitions = []
+    for step in steps:
+        name = step.get("name") if isinstance(step, dict) else None
+        candidate = tests_dir / str(name) if name else tests_dir
+        definitions.append(candidate if candidate.is_dir() else tests_dir)
+    return definitions
 
 
 def build_command(task_dir: Path, run_dir: Path, config_home: Path, codex_version: str,
@@ -33,18 +169,34 @@ def build_command(task_dir: Path, run_dir: Path, config_home: Path, codex_versio
     if native.get("model") != "gpt-6-astra" or native.get("model_reasoning_effort") != "medium":
         raise ValueError("unexpected Phase 3A root configuration")
     environment = json.loads((run_dir / "environment.json").read_text())
-    validate_environment(environment)
     task = tomllib.loads((task_dir / "task.toml").read_text())
-    # A pinned overlay may not silently omit a service defined by the task.
-    compose = task_dir / "environment" / "docker-compose.yaml"
-    if compose.exists():
-        import yaml
-        compose_data = yaml.safe_load(compose.read_text()) or {}
-        services = compose_data.get("services", {})
-        if compose_data.get("include") or any(service.get("extends") for service in services.values()):
-            raise ValueError("compose includes/extends require a resolved, audited environment snapshot")
-        if set(services) - set(environment["images"]):
-            raise ValueError("Gate 0 image freeze omits a compose service")
+    separate_verifier = _task_has_separate_verifier(task)
+    validate_environment(environment, require_verifier=separate_verifier)
+    agent_environment, verifier_environment = _role_environments(
+        environment, separate_verifier=separate_verifier
+    )
+    # A pinned overlay may not silently omit or add a service.  Harbor's
+    # separate verifier is built from task/tests (not task/environment), so
+    # validating both roles against the agent compose file would pin the
+    # verifier to the wrong image set.
+    agent_services = _definition_services(task_dir / "environment", role="agent")
+    if set(agent_environment["images"]) != agent_services:
+        raise ValueError("agent image freeze does not exactly match its environment definition")
+    if separate_verifier:
+        for definition in _verifier_definitions(task_dir, task):
+            verifier_services = _definition_services(definition, role="verifier")
+            if set(verifier_environment["images"]) != verifier_services:
+                raise ValueError(
+                    "verifier image freeze does not exactly match its environment definition"
+                )
+
+    if verifier_environment is not None and separate_verifier:
+        task_verifier = task.get("verifier") or {}
+        verifier_task_environment = task_verifier.get("environment") or task.get("environment") or {}
+        for key in ("cpus", "memory_mb"):
+            required = verifier_task_environment.get(key)
+            if required is not None and verifier_environment[key] < required:
+                raise ValueError(f"verifier {key} would lower the task-declared resource")
     build_timeout = task.get("environment", {}).get("build_timeout_sec", 600)
     job = {
         "job_name": "trial", "jobs_dir": str(run_dir / "harbor"), "n_attempts": 1,
@@ -55,10 +207,12 @@ def build_command(task_dir: Path, run_dir: Path, config_home: Path, codex_versio
                     "kwargs": {"version": codex_version, "config": str(config_home / "config.toml"),
                                "phase3_home": str(config_home)}}],
         "environment": {"import_path": "eval.phase3_codex_agent:PinnedDocker", "delete": True,
-                        "force_build": False, "override_cpus": environment["cpus"],
-                        "override_memory_mb": environment["memory_mb"],
+                        "force_build": False, "override_cpus": agent_environment["cpus"],
+                        "override_memory_mb": agent_environment["memory_mb"],
                         "cpu_enforcement_policy": "limit", "memory_enforcement_policy": "limit",
-                        "kwargs": {"phase3_owner_dir": str(run_dir), "phase3_images": environment["images"]}},
+                        "kwargs": {"phase3_owner_dir": str(run_dir),
+                                   "phase3_images": agent_environment["images"],
+                                   "phase3_verifier": verifier_environment}},
         "verifier": {"max_timeout_sec": 900},
         "environment_build_timeout_multiplier": min(1.0, 900 / build_timeout),
     }

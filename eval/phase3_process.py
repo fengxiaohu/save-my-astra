@@ -20,7 +20,18 @@ class TelemetryError(ValueError):
     pass
 
 
-def read_telemetry(path: Path, *, now: float | None = None) -> dict:
+_WEEKLY_KEYS = (
+    "weekly_used_percent",
+    "weekly_resets_at",
+    "weekly_window_duration_mins",
+)
+_WEEKLY_SCHEMA = "phase3a.telemetry.v1"
+_WEEKLY_WINDOW_MINUTES = 7 * 24 * 60
+
+
+def read_telemetry(
+    path: Path, *, now: float | None = None, require_weekly: bool | None = None
+) -> dict:
     now = time.time() if now is None else now
     try:
         data = json.loads(path.read_text())
@@ -35,6 +46,29 @@ def read_telemetry(path: Path, *, now: float | None = None) -> dict:
             raise ValueError("missing limit ID")
         if data.get("resource_pressure") not in {"normal", "stop"}:
             raise ValueError("resource_pressure must be normal or stop")
+        # Observer samples advertise the schema and must carry both windows.
+        # Legacy offline fixtures omit the schema and remain valid primary-only
+        # samples; they never receive an invented weekly value.
+        if require_weekly is None:
+            require_weekly = data.get("schema_version") == _WEEKLY_SCHEMA
+        present_weekly = [key in data for key in _WEEKLY_KEYS]
+        if require_weekly or any(present_weekly):
+            if not all(present_weekly):
+                raise ValueError("incomplete weekly telemetry")
+            weekly_used = data["weekly_used_percent"]
+            weekly_resets = data["weekly_resets_at"]
+            weekly_duration = data["weekly_window_duration_mins"]
+            for value, name in (
+                (weekly_used, "weekly_used_percent"),
+                (weekly_resets, "weekly_resets_at"),
+                (weekly_duration, "weekly_window_duration_mins"),
+            ):
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                    raise ValueError(f"invalid {name}")
+            if not 0 <= weekly_used <= 100 or weekly_resets <= now:
+                raise ValueError("invalid weekly quota window")
+            if weekly_duration != _WEEKLY_WINDOW_MINUTES:
+                raise ValueError("weekly quota window has unexpected duration")
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise TelemetryError(f"telemetry unavailable: {type(exc).__name__}") from None
     return data
@@ -45,10 +79,27 @@ def quota_decision(sample: dict, baseline: dict, *, launching: bool) -> str | No
         return "quota_limit_changed"
     if sample["resource_pressure"] == "stop":
         return "resource_stop"
+    weekly_present = [key in sample for key in _WEEKLY_KEYS]
+    baseline_weekly_present = [key in baseline for key in _WEEKLY_KEYS]
+    if any(weekly_present) or any(baseline_weekly_present):
+        if not all(weekly_present) or not all(baseline_weekly_present):
+            return "weekly_telemetry_unavailable"
+        # Weekly exhaustion must win over the five-hour signal. Otherwise a
+        # reset of the primary bucket could incorrectly release a weekly stop.
+        if sample["weekly_used_percent"] >= 100:
+            return "weekly_exhausted"
+    # A full five-hour bucket is a hard stop even when the percentage delta
+    # from the frozen baseline is below the 30 point threshold.
+    if sample["used_percent"] >= 100:
+        return "quota_exhausted"
     if sample["resets_at"] != baseline["resets_at"]:
         return "quota_window_changed"
+    if any(weekly_present) and sample["weekly_resets_at"] != baseline["weekly_resets_at"]:
+        return "weekly_window_changed"
     delta = sample["used_percent"] - baseline["used_percent"]
     if delta < 0:
+        return "quota_reading_regressed"
+    if any(weekly_present) and sample["weekly_used_percent"] < baseline["weekly_used_percent"]:
         return "quota_reading_regressed"
     if delta >= 30:
         return "quota_hard_stop"

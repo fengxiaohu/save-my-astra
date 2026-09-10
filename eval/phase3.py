@@ -29,14 +29,151 @@ def save(path: Path, data: dict | list) -> None:
     temporary.replace(path)
 
 
+_QUOTA_PAUSE_REASONS = frozenset(
+    {"quota_soft_stop", "quota_hard_stop", "quota_exhausted", "weekly_exhausted"}
+)
+
+
+def is_quota_pause(reason: str | None) -> bool:
+    return reason in _QUOTA_PAUSE_REASONS
+
+
+def checkpoint(out: Path, state: dict, records: list[dict]) -> None:
+    """Commit state and records as one checkpoint, then refresh JSON mirrors."""
+
+    payload = {"state": state, "records": records}
+    # The checkpoint is the recovery source.  state.json and records.json are
+    # intentionally retained as convenient external mirrors for reports/tools.
+    save(out / "checkpoint.json", payload)
+    save(out / "state.json", state)
+    save(out / "records.json", records)
+
+
+def load_checkpoint(out: Path) -> tuple[dict, list[dict]]:
+    """Load the atomic checkpoint, with compatibility for pre-checkpoint runs."""
+
+    checkpoint_path = out / "checkpoint.json"
+    if checkpoint_path.exists():
+        try:
+            payload = json.loads(checkpoint_path.read_text())
+            state = payload["state"]
+            records = payload["records"]
+            if not isinstance(state, dict) or not isinstance(records, list):
+                raise ValueError
+            return state, records
+        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            raise ValueError("invalid Phase 3A checkpoint") from None
+    try:
+        state = json.loads((out / "state.json").read_text())
+        records = json.loads((out / "records.json").read_text())
+    except (OSError, ValueError, json.JSONDecodeError):
+        raise ValueError("missing Phase 3A state or records") from None
+    if not isinstance(state, dict) or not isinstance(records, list):
+        raise ValueError("invalid Phase 3A state or records")
+    return state, records
+
+
+def mark_quota_pause(state: dict, reason: str, sample: dict, *, next_index: int) -> None:
+    """Record the bucket that caused a pause; resume requires a later reset."""
+
+    if not is_quota_pause(reason):
+        raise ValueError(f"not a quota pause: {reason}")
+    weekly = reason == "weekly_exhausted"
+    if weekly:
+        required = ("weekly_used_percent", "weekly_resets_at", "weekly_window_duration_mins")
+        if any(key not in sample for key in required):
+            raise ValueError("weekly quota telemetry is incomplete")
+        pause_resets_at = sample["weekly_resets_at"]
+        pause_used_percent = sample["weekly_used_percent"]
+    else:
+        pause_resets_at = sample["resets_at"]
+        pause_used_percent = sample["used_percent"]
+    state["quota_pause"] = {
+        "reason": reason,
+        "limit_id": sample["limit_id"],
+        "window": "weekly" if weekly else "primary",
+        "resets_at": pause_resets_at,
+        # ``used_percent`` always retains the real five-hour reading.  Weekly
+        # usage is kept separately and is never substituted for that field.
+        "used_percent": sample["used_percent"],
+        "primary_used_percent": sample["used_percent"],
+        "primary_resets_at": sample["resets_at"],
+        "next_index": next_index,
+    }
+    if weekly:
+        state["quota_pause"]["weekly_used_percent"] = pause_used_percent
+        state["quota_pause"]["weekly_resets_at"] = sample["weekly_resets_at"]
+    # Old state files used a date marker.  Remove it when writing the new
+    # schema so a same-day reset cannot be mistaken for a permanent stop.
+    state.pop("hard_stop_day", None)
+
+
+def resume_quota_pause(state: dict, sample: dict) -> str | None:
+    """Return a pause reason until the original bucket has actually reset."""
+
+    pause = state.get("quota_pause")
+    # Translate the old marker once so an interrupted pre-checkpoint run gets
+    # the same safe reset behavior without losing its original stop reason.
+    if pause is None and (state.get("hard_stop_day") or is_quota_pause(state.get("stop_reason"))):
+        baseline = state.get("quota_baseline") or {}
+        if baseline.get("resets_at") is not None:
+            reason = state.get("stop_reason") if is_quota_pause(state.get("stop_reason")) else "quota_hard_stop"
+            weekly = reason == "weekly_exhausted"
+            if weekly and baseline.get("weekly_resets_at") is None:
+                return "weekly_telemetry_unavailable"
+            pause = {
+                "reason": reason,
+                "limit_id": baseline.get("limit_id", sample["limit_id"]),
+                "window": "weekly" if weekly else "primary",
+                "resets_at": baseline.get("weekly_resets_at") if weekly else baseline["resets_at"],
+            }
+            state["quota_pause"] = pause
+    if pause is None:
+        return None
+    if sample["limit_id"] != pause.get("limit_id"):
+        raise ValueError("quota limit ID changed while waiting for reset")
+    weekly = pause.get("window") == "weekly" or pause.get("reason") == "weekly_exhausted"
+    if weekly and any(key not in sample for key in (
+        "weekly_used_percent", "weekly_resets_at", "weekly_window_duration_mins"
+    )):
+        return "weekly_telemetry_unavailable"
+    paused_resets_at = pause.get("resets_at", 0)
+    reset_key = "weekly_resets_at" if weekly else "resets_at"
+    used_key = "weekly_used_percent" if weekly else "used_percent"
+    # A future-looking resets_at value is not proof that the old bucket has
+    # ended.  The observation itself must be at or after that original reset.
+    if sample["observed_at"] < paused_resets_at:
+        return pause.get("reason") or "quota_hard_stop"
+    if sample[reset_key] <= paused_resets_at:
+        return pause.get("reason") or "quota_hard_stop"
+    # A changed reset timestamp is not enough by itself: require a usable
+    # sample from that new window.  At 100 percent, remain paused again.
+    if sample[used_key] >= 100:
+        pause["reason"] = "weekly_exhausted" if weekly else "quota_exhausted"
+        pause["window"] = "weekly" if weekly else "primary"
+        pause["resets_at"] = sample[reset_key]
+        pause["used_percent"] = sample["used_percent"]
+        pause["primary_used_percent"] = sample["used_percent"]
+        pause["primary_resets_at"] = sample["resets_at"]
+        if weekly:
+            pause["weekly_used_percent"] = sample["weekly_used_percent"]
+            pause["weekly_resets_at"] = sample["weekly_resets_at"]
+        return pause["reason"]
+    state.pop("quota_pause", None)
+    state.pop("hard_stop_day", None)
+    state["quota_baseline"] = sample
+    state["quota_window_resumed_at"] = time.time()
+    return None
+
+
 def prepare(out: Path, task_root: Path, codex_version: str) -> Path:
     out = out.resolve()
     if out.exists() and any(out.iterdir()):
         raise ValueError("prepare requires an empty output directory")
     frozen = freeze_inputs(task_root.resolve(), codex_version)
     manifest = {
-        "schema_version": "phase3a.manifest.v1", "protocol_id": f"phase3a-{uuid.uuid4().hex[:12]}",
-        "created_at": time.time(), "plan_version": "1.1",
+        "schema_version": "phase3a.manifest.v1.2", "protocol_id": f"phase3a-{uuid.uuid4().hex[:12]}",
+        "created_at": time.time(), "plan_version": "1.2",
         "task_root": str(task_root.resolve()), "codex_version": codex_version,
         "frozen": frozen, "schedule": schedule(), "n": 1,
         "account": "ChatGPT", "runtime": "harbor", "host": platform.platform(),
@@ -46,8 +183,7 @@ def prepare(out: Path, task_root: Path, codex_version: str) -> Path:
     }
     manifest["freeze_sha256"] = digest(manifest)
     save(out / "manifest.json", manifest)
-    save(out / "records.json", [])
-    save(out / "state.json", {"next_index": 0, "stop_reason": None, "resume_allowed": True})
+    checkpoint(out, {"next_index": 0, "stop_reason": None, "resume_allowed": True}, [])
     return out / "manifest.json"
 
 
@@ -128,9 +264,19 @@ def protocol_violation(arm: str, metrics: dict) -> str | None:
 
 
 def stop_after_record(record: dict) -> str | None:
+    cleanup = record.get("cleanup")
+    if record.get("cleanup_error") or (
+        isinstance(cleanup, dict) and cleanup.get("complete") is not True
+    ):
+        # Cleanup failure is permanent even when the supervisor's original
+        # reason was quota related.  The record retains that original reason
+        # as evidence, while the protocol stops for manual review.
+        return "cleanup_error"
     violation = protocol_violation(record["arm"], record["metrics"])
     if violation:
         return violation
+    if record["status"] == "budget_aborted" and is_quota_pause(record.get("stop_reason")):
+        return record["stop_reason"]
     if record["status"] in {"model_unavailable", "budget_aborted", "infrastructure_error", "cleanup_error"}:
         return record["status"]
     if not record["metrics"].get("observation_complete"):
@@ -156,8 +302,15 @@ def gate1(records: list[dict]) -> str | None:
 
 
 def execute(out: Path, telemetry: Path, auth_source: Path) -> Path:
-    """Explicit future execution entry point. Never called by prepare or tests by default."""
-    from eval.phase3_harbor import build_command, read_result, cleanup_run
+    """Run the frozen schedule with resumable quota pauses.
+
+    A quota pause before a trial leaves ``next_index`` untouched.  A quota
+    stop during a trial records that partial attempt as ``budget_aborted`` and
+    advances to the next planned trial on a later invocation.  Every resumed
+    trial gets a new process and attempt ID; no Codex session is continued.
+    """
+
+    from eval.phase3_harbor import build_command, cleanup_run, read_result
     from eval.phase3_metrics import collect_events
     from eval.phase3_report import write_phase3_report
 
@@ -166,56 +319,89 @@ def execute(out: Path, telemetry: Path, auth_source: Path) -> Path:
         recover_auth_lease(out / ".auth-lease.json")
         manifest = validate_manifest(out)
         gate = validate_gate0(out, manifest)
-        state = json.loads((out / "state.json").read_text())
-        records = json.loads((out / "records.json").read_text())
+        state, records = load_checkpoint(out)
+        state.setdefault("next_index", 0)
+        state.setdefault("resume_allowed", True)
         if state.get("stop_reason") == "running":
             for record in records:
-                if record["status"] == "running":
-                    record.update(status="budget_aborted", stop_reason="runner_interrupted", metrics={})
-                    attempt_path = out / "runs" / record["task"] / record["arm"] / record["attempt_id"]
-                    if not attempt_path.resolve().is_relative_to(out):
-                        raise ValueError("invalid interrupted run path")
-                    record["cleanup"] = cleanup_run(attempt_path)
-                    save(attempt_path / "result.json", record)
+                if record.get("status") != "running":
+                    continue
+                record.update(
+                    status="budget_aborted",
+                    stop_reason="runner_interrupted",
+                    partial=True,
+                    verifier={"passed": None},
+                    metrics={},
+                )
+                attempt_path = out / "runs" / record["task"] / record["arm"] / record["attempt_id"]
+                if not attempt_path.resolve().is_relative_to(out):
+                    raise ValueError("invalid interrupted run path")
+                record["cleanup"] = cleanup_run(attempt_path)
+                save(attempt_path / "result.json", record)
             state.update(stop_reason="runner_interrupted", resume_allowed=False)
-            save(out / "records.json", records)
-            save(out / "state.json", state)
+            checkpoint(out, state, records)
             return write_phase3_report(out, records, manifest)
-        if not state["resume_allowed"]:
-            raise ValueError(f"protocol stopped: {state['stop_reason']}; do not mix a new strategy into it")
+
+        if not state.get("resume_allowed", True):
+            raise ValueError(
+                f"protocol stopped: {state.get('stop_reason')}; do not mix a new strategy into it"
+            )
+
         gate_hash = digest(gate)
         if state.get("gate0_sha256", gate_hash) != gate_hash:
             raise ValueError("Gate 0 evidence changed after the first launch")
         state["gate0_sha256"] = gate_hash
-        sample = read_telemetry(telemetry)
-        baseline = state.get("quota_baseline", sample)
-        if baseline["limit_id"] != sample["limit_id"]:
-            raise ValueError("quota limit ID changed; cannot compare windows")
-        if state.get("hard_stop_day") == time.strftime("%Y-%m-%d"):
-            raise ValueError("hard stop prevents further experiments today")
-        if baseline["resets_at"] != sample["resets_at"]:
-            baseline = sample
-        state["quota_baseline"] = baseline
 
-        def persist(reason=None, resume=True):
+        def persist(reason: str | None = None, resume: bool = True) -> Path:
             state.update(stop_reason=reason, resume_allowed=resume)
-            save(out / "state.json", state)
-            save(out / "records.json", records)
+            checkpoint(out, state, records)
             return write_phase3_report(out, records, manifest)
 
+        try:
+            sample = read_telemetry(telemetry)
+        except TelemetryError:
+            return persist("telemetry_unavailable", False)
+
+        baseline = state.get("quota_baseline") or sample
+        if baseline.get("limit_id") != sample["limit_id"]:
+            return persist("quota_limit_changed", False)
+
+        # A prior hard stop is resumable only after its original bucket has
+        # reset and the first sample from that new bucket is below exhaustion.
+        if state.get("quota_pause") or state.get("hard_stop_day") or is_quota_pause(state.get("stop_reason")):
+            pause_reason = resume_quota_pause(state, sample)
+            if pause_reason:
+                return persist(pause_reason, is_quota_pause(pause_reason))
+            baseline = sample
+        elif baseline.get("resets_at") != sample["resets_at"]:
+            # A normal restart across a completed window starts a new baseline.
+            baseline = sample
+        state["quota_baseline"] = baseline
         persist()
-        for index in range(state["next_index"], len(manifest["schedule"])):
+
+        for index in range(int(state["next_index"]), len(manifest["schedule"])):
             step = manifest["schedule"][index]
             try:
                 before = read_telemetry(telemetry)
-                reason = quota_decision(before, baseline, launching=True)
             except TelemetryError:
-                reason = "telemetry_unavailable"
+                return persist("telemetry_unavailable", False)
+            if before["limit_id"] != baseline["limit_id"]:
+                return persist("quota_limit_changed", False)
+            weekly_window_changed = (
+                "weekly_resets_at" in before
+                and "weekly_resets_at" in baseline
+                and before["weekly_resets_at"] != baseline["weekly_resets_at"]
+            )
+            if before["resets_at"] != baseline["resets_at"] or weekly_window_changed:
+                baseline = before
+                state["quota_baseline"] = baseline
+            reason = quota_decision(before, baseline, launching=True)
             if reason:
-                if reason == "quota_hard_stop":
-                    state["hard_stop_day"] = time.strftime("%Y-%m-%d")
-                return persist(reason, True)
-            # An interrupted attempt is evidence, never silently retried on resume.
+                if is_quota_pause(reason):
+                    mark_quota_pause(state, reason, before, next_index=index)
+                    return persist(reason, True)
+                return persist(reason, False)
+
             for attempt in range(2):
                 validate_manifest(out)
                 if digest(validate_gate0(out, manifest)) != state["gate0_sha256"]:
@@ -223,16 +409,28 @@ def execute(out: Path, telemetry: Path, auth_source: Path) -> Path:
                 attempt_id = f"{index + 1:02d}-{attempt + 1}-{uuid.uuid4().hex[:8]}"
                 run_dir = out / "runs" / step["task"] / step["arm"] / attempt_id
                 run_dir.mkdir(parents=True, exist_ok=False)
-                record = {**step, "attempt_id": attempt_id, "status": "running",
-                          "replacement_of": None if attempt == 0 else records[-1]["attempt_id"],
-                          "verifier": {"passed": None}, "metrics": {}, "timing": {},
-                          "started_at": time.time(), "quota_before": before, "usd_estimate": None}
+                record = {
+                    **step,
+                    "attempt_id": attempt_id,
+                    "status": "running",
+                    "replacement_of": None if attempt == 0 else records[-1]["attempt_id"],
+                    "verifier": {"passed": None},
+                    "metrics": {},
+                    "timing": {},
+                    "started_at": time.time(),
+                    "quota_before": before,
+                    "usd_estimate": None,
+                }
                 records.append(record)
-                persist("running", False)
+                checkpoint(out, state | {"stop_reason": "running", "resume_allowed": False}, records)
                 save(run_dir / "manifest.json", {"freeze_sha256": manifest["freeze_sha256"], **record})
                 task_dir = Path(manifest["task_root"]) / step["task"]
                 latest_sample = before
                 last_checked = 0.0
+                process: dict = {"returncode": 1, "stop_reason": None, "end_to_end_seconds": 0}
+                supervisor_stop: str | None = None
+                secrets: list[str] = []
+                cleanup_attempted = False
 
                 def stop_check():
                     nonlocal latest_sample, last_checked
@@ -250,47 +448,131 @@ def execute(out: Path, telemetry: Path, auth_source: Path) -> Path:
                     save(run_dir / "environment.json", gate["environments"][step["task"]])
                     command = build_command(task_dir, run_dir, config_home, manifest["codex_version"], 3600)
                     save(run_dir / "command.json", command)
-                    with temporary_chatgpt_auth(auth_source, lease_file=out / ".auth-lease.json") as (auth_path, secrets):
-                        env = os.environ.copy()
-                        for name in list(env):
-                            if name.endswith("API_KEY") or name in {"OPENAI_BASE_URL", "OPENAI_API_BASE", "AZURE_OPENAI_ENDPOINT"}:
-                                env.pop(name)
-                        env.update(PHASE3A_AUTH_FILE=str(auth_path), CODEX_HOME=str(config_home),
-                                   PYTHONPATH=str(ROOT) + os.pathsep + env.get("PYTHONPATH", ""))
+                    try:
+                        with temporary_chatgpt_auth(
+                            auth_source, lease_file=out / ".auth-lease.json"
+                        ) as (auth_path, secrets):
+                            env = os.environ.copy()
+                            for name in list(env):
+                                if name.endswith("API_KEY") or name in {
+                                    "OPENAI_BASE_URL",
+                                    "OPENAI_API_BASE",
+                                    "AZURE_OPENAI_ENDPOINT",
+                                }:
+                                    env.pop(name)
+                            env.update(
+                                PHASE3A_AUTH_FILE=str(auth_path),
+                                CODEX_HOME=str(config_home),
+                                PYTHONPATH=str(ROOT) + os.pathsep + env.get("PYTHONPATH", ""),
+                            )
+                            process = supervise(
+                                command,
+                                cwd=ROOT,
+                                env=env,
+                                log=run_dir / "raw" / "harbor.log",
+                                timeout_seconds=5400,
+                                stop_check=stop_check,
+                                secrets=secrets,
+                            )
+                            supervisor_stop = process.get("stop_reason")
+                    finally:
+                        cleanup_attempted = True
                         try:
-                            process = supervise(command, cwd=ROOT, env=env,
-                                                log=run_dir / "raw" / "harbor.log",
-                                                timeout_seconds=5400, stop_check=stop_check, secrets=secrets)
+                            record["cleanup"] = cleanup_run(run_dir)
                         finally:
-                            try:
-                                record["cleanup"] = cleanup_run(run_dir)
-                            finally:
-                                scrub_artifacts(run_dir, secrets)
-                    result = read_result(run_dir)
+                            scrub_artifacts(run_dir, secrets)
+
+                    # A supervisor stop is authoritative.  A missing or late
+                    # Harbor result must not turn a partial quota abort into a
+                    # verifier pass or erase its original stop reason.
+                    try:
+                        result = read_result(run_dir)
+                    except Exception as exc:
+                        result = {
+                            "status": "budget_aborted" if supervisor_stop else "observation_incomplete",
+                            "verifier": {"passed": None},
+                            "events": [],
+                            "error_type": type(exc).__name__,
+                        }
                     events = result.pop("events", [])
                     record.update(result)
                     record["metrics"] = collect_events(events)
-                    (run_dir / "events.jsonl").write_text("".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events))
-                    record["timing"] = {**record.get("timing", {}),
-                                        "end_to_end_seconds": process["end_to_end_seconds"]}
-                    if process["stop_reason"]:
-                        record["status"] = "cleanup_error" if process["stop_reason"] == "descendant_cleanup" else "budget_aborted"
-                        record["stop_reason"] = process["stop_reason"]
-                        if process["stop_reason"] == "quota_hard_stop":
-                            state["hard_stop_day"] = time.strftime("%Y-%m-%d")
-                    elif process["returncode"] and record.get("status") == "completed":
+                    (run_dir / "events.jsonl").write_text(
+                        "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events)
+                    )
+                    record["timing"] = {
+                        **record.get("timing", {}),
+                        "end_to_end_seconds": process.get("end_to_end_seconds"),
+                    }
+                    if supervisor_stop:
+                        record["supervisor_stop_reason"] = supervisor_stop
+                        record.update(
+                            status="cleanup_error"
+                            if supervisor_stop == "descendant_cleanup"
+                            else "budget_aborted",
+                            stop_reason=supervisor_stop,
+                            partial=True,
+                            verifier={"passed": None},
+                        )
+                    elif process.get("returncode") and record.get("status") == "completed":
                         record["status"] = "agent_error"
-                    if record.get("cleanup", {}).get("complete") is not True:
+                    cleanup = record.get("cleanup", {})
+                    if cleanup.get("complete") is not True:
+                        record["cleanup_error"] = cleanup.get("errors", True)
+                        if supervisor_stop:
+                            record["supervisor_stop_reason"] = supervisor_stop
                         record["status"] = "cleanup_error"
                 except (OSError, ValueError, RuntimeError) as exc:
-                    record.update(status="observation_incomplete", error_type=type(exc).__name__)
+                    if cleanup_attempted:
+                        record.update(
+                            status="cleanup_error",
+                            cleanup={"complete": False, "errors": [type(exc).__name__]},
+                            cleanup_error=type(exc).__name__,
+                            error_type=type(exc).__name__,
+                            verifier={"passed": None},
+                        )
+                    else:
+                        record.update(
+                            status="budget_aborted" if supervisor_stop else "observation_incomplete",
+                            error_type=type(exc).__name__,
+                            verifier={"passed": None},
+                        )
+                    if supervisor_stop:
+                        record.update(
+                            stop_reason=supervisor_stop,
+                            supervisor_stop_reason=supervisor_stop,
+                            partial=True,
+                        )
                     record["metrics"] = collect_events([])
                 except BaseException:
-                    record.update(status="budget_aborted", stop_reason="interrupted")
-                    record["metrics"] = collect_events([])
+                    if cleanup_attempted:
+                        record.update(
+                            status="cleanup_error",
+                            cleanup={"complete": False, "errors": ["exception"]},
+                            cleanup_error="exception",
+                            verifier={"passed": None},
+                            metrics=collect_events([]),
+                        )
+                        if supervisor_stop:
+                            record.update(
+                                stop_reason=supervisor_stop,
+                                supervisor_stop_reason=supervisor_stop,
+                                partial=True,
+                            )
+                        save(run_dir / "result.json", record)
+                        persist("cleanup_error", False)
+                        raise
+                    record.update(
+                        status="budget_aborted",
+                        stop_reason=supervisor_stop or "interrupted",
+                        partial=True,
+                        verifier={"passed": None},
+                        metrics=collect_events([]),
+                    )
                     save(run_dir / "result.json", record)
-                    persist("interrupted", False)
+                    persist(record["stop_reason"], False)
                     raise
+
                 record.update(finished_at=time.time(), quota_after=latest_sample)
                 save(run_dir / "result.json", record)
                 save(run_dir / "usage.json", record["metrics"])
@@ -298,6 +580,7 @@ def execute(out: Path, telemetry: Path, auth_source: Path) -> Path:
                 if violation:
                     record.update(status="protocol_violation", violation=violation)
                     save(run_dir / "result.json", record)
+
                 if record["status"] == "infrastructure_error" and attempt == 0:
                     try:
                         retry_sample = read_telemetry(telemetry)
@@ -305,10 +588,20 @@ def execute(out: Path, telemetry: Path, auth_source: Path) -> Path:
                     except TelemetryError:
                         retry_stop = "telemetry_unavailable"
                     if retry_stop:
+                        if is_quota_pause(retry_stop):
+                            # Do not re-enter this loop after a quota pause:
+                            # that would reset ``attempt`` and permit an
+                            # unbounded replacement chain across invocations.
+                            record["manual_review_required"] = True
+                            record["retry_stop_reason"] = retry_stop
+                            state["manual_review_required"] = True
+                            save(run_dir / "result.json", record)
+                            return persist(retry_stop, False)
                         return persist(retry_stop, False)
                     before = retry_sample
                     continue
                 break
+
             state["next_index"] = index + 1
             reason = stop_after_record(record)
             if gate["mode"] == "full" and not record["metrics"].get("usage_complete"):
@@ -316,6 +609,20 @@ def execute(out: Path, telemetry: Path, auth_source: Path) -> Path:
             if not reason and index == 3:
                 reason = gate1(records)
             if reason:
+                if is_quota_pause(reason) and record.get("status") == "budget_aborted":
+                    try:
+                        mark_quota_pause(
+                            state,
+                            reason,
+                            record.get("quota_after") or latest_sample,
+                            next_index=index + 1,
+                        )
+                    except ValueError:
+                        # A weekly stop without the observer's weekly fields
+                        # is incomplete telemetry, never a reason to guess or
+                        # release a pause.
+                        return persist("weekly_telemetry_unavailable", False)
+                    return persist(reason, True)
                 return persist(reason, False)
             persist()
         return persist("completed", False)

@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 .venv/
+.venv-phase3/
 __pycache__/
 *.py[cod]
 .pytest_cache/

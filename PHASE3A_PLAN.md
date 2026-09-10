@@ -1,6 +1,6 @@
 # Phase 3A — Local Coding Delegation A/B 实验计划
 
-版本：v1.1，2026-09-08。两臂 parent effort 统一为 medium。八项实验前置能力已进行代码实现和离线验证；尚未执行真实 Gate 0 模型探测或正式实验。操作入口与剩余运行时验证见 [docs/phase3a.md](docs/phase3a.md)。
+版本：v1.2，2026-09-09。两臂 parent effort 统一为 medium。八项实验前置能力已进行代码实现和离线验证；当前 `formal_trials=0`，真实 Gate 0 探测正在进行，尚无任何 Gate 0 `passed` 证据，也未执行正式模型实验。操作入口与剩余运行时验证见 [docs/phase3a.md](docs/phase3a.md)。v1.2 增加额度窗口恢复语义：额度暂停等待原窗口 `resetsAt` 后的可用样本，运行中额度中止的 partial 试次不补跑。
 
 ## 1. 目标和结论边界
 
@@ -50,11 +50,11 @@
 
 固定 ChatGPT Plus 认证和 Codex CLI；不使用 API key 认证，不引用 API 价格作为本阶段成本。主执行链路为 Harbor → 固定版本 Codex agent/CLI → 任务环境 → 原始 verifier。只向 codex exec 提供任务名字或摘要不算完成 TB4 实验。
 
-固定宿主机、OS、CPU 架构、Docker/Harbor/CLI 版本、agent adapter 版本、任务快照、依赖及镜像 digest、配置和 policy 哈希。模型标识固定不保证服务端快照永久固定；记录时间和可见模型版本，遇到已知服务变更停止混合运行。
+固定宿主机、OS、CPU 架构、Docker/Harbor/CLI 版本、agent adapter 版本、任务快照、依赖及镜像 digest、配置和 policy 哈希。上游任务源固定为 `harbor-framework/terminal-bench` v4.0.0，commit `452bf305c6daa62fc59061d22133a7cbc7c1572e`。模型标识固定不保证服务端快照永久固定；记录时间和可见模型版本，遇到已知服务变更停止混合运行。
 
 ## 4. 当前仓库与计划之间的缺口
 
-以下列出原审阅缺口及本轮实现状态；静态实现不代替真实 Gate 0：
+以下列出原审阅缺口及本轮实现状态；静态实现不代替正在进行的真实 Gate 0：
 
 | 位置 | 观察 | 正式运行前的要求 |
 | --- | --- | --- |
@@ -62,13 +62,28 @@
 | fallback 与 baseline | 实验禁用 fallback，baseline 不生成 worker 文件或委派指令 | Gate 0 验证运行时不会继承日常策略 |
 | spawn / usage | 已改为结构化创建证据、线程归因和完整性标记 | 用真实 CLI 日志验证当前版本语义 |
 | Harbor 双臂执行 | 新增冻结的八步 runner；旧入口禁止静默单臂执行 | 实际 Harbor 兼容性仍待 Gate 0 |
+| upstream source | 已固定 `harbor-framework/terminal-bench` v4.0.0 / `452bf305c6daa62fc59061d22133a7cbc7c1572e` | Gate 0 复核本地快照与该版本一致 |
+| Gate 0 environments | 已实现 canonical task mapping 与角色化 `agent` / `verifier` image/resource 校验；支持 registry digest 与 local `sha256:` image ID，并对 local ID 执行 `docker image inspect` | 用真实 task 环境完成四题探测，不能以 fixture 代替 |
+| quota observer | `eval.phase3_observer` 已校验真实 300 分钟 primary 与 10080 分钟 weekly 窗口，并输出 allow-listed telemetry | Gate 0 验证 ChatGPT Plus bucket、宿主资源和实际 telemetry |
+| VM allocation | 已授权 6 vCPU / 16 GiB | Gate 0 记录并核对实际有效上限 |
 | 四题清单 | 新增 phase3a 显式清单，禁止截断；本地任务树哈希冻结 | 尚需真实四题快照和环境预检 |
 | 认证 / 超时 / 清理 | 临时认证上传、独立配置、agent/verifier 上限、quota 监督、专属 Docker 清理已接入 | 不把离线模拟当成认证或容器已验证 |
-| 配对报告 | 逐题终止状态、原始 reward、parent reduction、身份及 incomplete 已实现，美元为 null | 正式结果目前为空，未执行实验 |
+| 配对报告 | 逐题终止状态、原始 reward、parent reduction、身份及 incomplete 已实现，美元为 null | `formal_trials=0`；Gate 0 探测完成前不生成正式结果 |
 
 使用独立的 `phase3a prepare / inspect / execute` 入口。prepare 只冻结已有本地输入；execute 必须具备与冻结绑定的 Gate 0 证据、镜像 digest 和有效 telemetry。不要使用默认 smoke 或日常安装命令代替这一流程。
 
 ## 5. Gate 0：正式实验的前置验收
+
+Gate 0 的环境清单使用 canonical task mapping：每个任务明确冻结
+`agent` 角色，并在 verifier 使用独立环境时明确冻结 `verifier` 角色；两者
+各自列出全部服务的 immutable image 与 `cpus`/`memory_mb`。image 可以是
+registry digest（`registry/image@sha256:...`）或本机的
+`sha256:<64-hex>` image ID。local ID 必须通过 `docker image inspect` 解析并
+与冻结值完全相同；角色化 verifier 不得静默继承 agent 的 image 或资源。
+Gate 0 只接受 canonical 角色结构和已解析的 service set，不以旧的扁平
+environment 字段替代。当前 VM 已获授权 6 vCPU / 16 GiB，实际有效上限仍
+须在探测证据中记录和核对。实现为没有独立 verifier 的旧任务保留了扁平
+agent-equivalent 读取兼容性，但 Gate 0 产物仍应写 canonical 角色映射。
 
 ### 5.1 四题环境预检
 
@@ -83,9 +98,9 @@
 
 在不调用模型的情况下完成容器启动、依赖准备、所需服务和 verifier 可执行性检查。原始有缺陷代码未通过 verifier 可以是预期现象；关注 verifier 能否正常执行，不能为“修好预检”修改任务或隐藏验收要求。
 
-默认资源预算建议：Docker VM 6 vCPU / 12 GiB，总是串行执行 runs；预检若证实不足，可在首个 primary run 前调整并冻结。记录所有 task 容器的限制、架构和模拟执行情况。不同任务可有不同固定需求，同题两臂必须一致。
+Docker VM 使用已授权的 6 vCPU / 16 GiB 配额，总是串行执行 runs；预检须记录实际 task 容器限制、架构和模拟执行情况。不同任务可有不同固定需求，同题两臂必须一致。
 
-若某题无法运行，记录 preflight_blocked；不静默换题。先解决兼容性，或另立清楚标记的缩小版协议，不能对未完成四题宣称达到四题标准。
+若某题无法运行，记录 preflight_blocked；不静默换题。先解决兼容性，或另立清楚标记的缩小版协议，不能对未完成四题宣称达到四题标准。当前仍处于真实 Gate 0 探测，不能把静态校验或离线 fixture 标为 passed。
 
 ### 5.2 Harness 验收
 
@@ -125,7 +140,13 @@ Agent 阶段的固定上限为每 run 60 分钟；若任务自身规定更短上
 | 7 | T4 nextjs-performance | B：Luna |
 | 8 | T4 nextjs-performance | A：Solo |
 
-此顺序平衡先后效应，不是随机样本。暂停后恢复下一个计划 run，不因结果改变顺序、effort、任务提示或拆分策略。
+此顺序平衡先后效应，不是随机样本。暂停后仅在原 quota 窗口的
+`resetsAt` 之后取得一个新的、未耗尽的可用窗口样本时恢复下一个计划
+run；不把同一天标记当作额度恢复证据。若启动前暂停，`next_index` 不变；
+若运行中因额度中止，保留该次 partial `budget_aborted` 记录、
+`verifier.passed = null`，恢复时从下一个计划项开始，使用新的进程和会话，
+不补跑或伪称恢复原 Codex 会话。不因结果改变顺序、effort、任务提示或拆分
+策略。
 
 ## 7. Gate 1、异常与止损
 
@@ -145,9 +166,17 @@ Child 身份 unknown 或事件链缺失：标 observation_incomplete，暂停以
 | 止损中断了尚未完成的 run | budget_aborted，验收可另记，不能视为完整配对 |
 | 尚未执行的任务 | not_run，不算作答题失败 |
 
-独立基础设施故障允许每个 task × arm 最多一次 replacement，旧记录不删除，明确 replacement_of。所有消耗计入止损；正式计划八次 primary 与额外尝试分开统计。不得因为不 spawn、token 高或质量失败而重跑。再次基础设施故障则停止该配对，结论 incomplete。
+独立基础设施故障允许每个 task × arm 最多一次 replacement，旧记录不删除，明确 replacement_of。所有消耗计入止损；正式计划八次 primary 与额外尝试分开统计。不得因为不 spawn、token 高或质量失败而重跑。再次基础设施故障则停止该配对，结论 incomplete。若 replacement 启动前的额度止损触发，记录 `manual_review_required` 并永久停止，不能在恢复时重置 attempt 计数后无限重放 primary。
 
-Plus 只用于观察和止损：同一 5h 窗口相对开始读数增加 ≥20 个百分点，不启动下一次；达到 ≥30 个百分点，停止当前运行并停止当天实验。读数使用 used percent，记录 limit ID、采样时间和 resetsAt，不能跨 reset 相减。窗口内其他账户活动、延迟或缺失使其无法解释时，不能当成 benchmark 归因消耗；读数不可用则暂停新 run，先恢复观察。
+Plus 只用于观察和止损；`eval.phase3_observer` 读取并验证 Codex 的真实
+300 分钟 primary 窗口与 10080 分钟 weekly 窗口，并写入 allow-listed
+telemetry。任一窗口达到 100% 都会暂停；同一 5h 窗口相对开始读数增加 ≥20
+个百分点，不启动下一次；达到 ≥30 个百分点，停止当前运行并暂停到对应原窗口
+`resetsAt` 之后。恢复必须观测到后续可用窗口，不能跨 reset 相减或仅凭日期
+推进。读数使用 used percent，记录 primary/weekly 的 limit ID、采样时间和
+reset 时间。窗口内其他账户活动、延迟或缺失使其无法解释时，不能当成
+benchmark 归因消耗；读数不可用则暂停新 run，先恢复观察。资源、协议和
+观测链错误不因 quota reset 自动放行。
 
 持续红色 memory pressure、严重 swap 或热降频时停止启动新 run；若中断当前 run，记录实际状态和原因。是否构成策略资源失败按证据判断，不事后删除 treatment 的不利表现。
 

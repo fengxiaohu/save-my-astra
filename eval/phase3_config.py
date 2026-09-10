@@ -116,7 +116,8 @@ def _phase3_config(profile: Profile, arm: str) -> str:
         "enabled = true\n"
         f'default_subagent_model = "{profile.subagent_model}"\n'
         f'default_subagent_reasoning_effort = "{profile.subagent_effort}"\n'
-        "max_concurrent_threads_per_session = 4\n\n"
+        # Codex 0.153.4 counts child threads here; the root adds one slot.
+        "max_concurrent_threads_per_session = 3\n\n"
         "[features.multi_agent_v2]\n"
         "hide_spawn_agent_metadata = false\n"
     )
